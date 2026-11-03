@@ -30,12 +30,12 @@ Inspect step-by-step thoughts, tool actions, verifier scores, and export Direct 
   - Unified architecture with an interactive CLI terminal (`dockyard`) and a modern Desktop UI (`@dockyard/desktop`).
   - Seamless support for **macOS** and **Windows** (normalizes `\` and `/` file paths, PowerShell, CMD, Bash).
 - **All Major Model Providers**:
-  - **OpenRouter**: Access to DeepSeek, Claude 3.5, Llama 3.3, Hermes 3, and 200+ models.
+  - **OpenRouter**: Access to DeepSeek, Opus 5.5, Sonnet 5.5, Llama 3.3, Hermes 3, and 200+ models.
   - **NVIDIA NIM**: Accelerated cloud inference for Llama, DeepSeek, and Nemotron.
-  - **Anthropic**: Direct native Claude 3.5 Sonnet / Opus messages API.
-  - **OpenAI**: GPT-4o, o1, o3-mini.
-  - **Google Gemini**: Gemini 1.5 Pro / Flash.
-  - **MiniMax**: abab6.5s high-context reasoning.
+  - **Anthropic**: Direct native Claude Haiku, Sonnet and Opus messages API.
+  - **OpenAI**: GPT 5, 5.5, 6
+  - **Google Gemini**: Gemini Pro and Flash.
+  - **MiniMax**: M3, M3.1
   - **Cloudflare Workers AI**: Edge inference across global servers.
   - **Groq & Cerebras**: Ultra-low latency, high-throughput engines.
   - **Local AI Models**: Offline inference with **Ollama** (`localhost:11434`), **LM Studio** (`localhost:1234`), and **vLLM** (`localhost:8000`).
