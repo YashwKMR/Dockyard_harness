@@ -1,30 +1,66 @@
-# Dockyard Architecture Overview
+# Dockyard Harness Architecture
 
-Dockyard is designed as a modular, open-source agentic coding harness inspired by OpenAI Codex, OpenCode, DeepSeek Harness, and Hermes.
+## Overview
+**Dockyard Harness** is a modular, high-reliability agentic harness designed for autonomous software engineering, multi-turn reasoning, and reinforcement learning data synthesis.
 
-## Key Subsystems
+```
+                          ┌────────────────────────┐
+                          │   @dockyard/cli / UI   │
+                          └───────────┬────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │     @dockyard/core     │
+                          │      Agent Loop        │
+                          └─────┬─────┬─────┬──────┘
+                                │     │     │
+          ┌─────────────────────┘     │     └─────────────────────┐
+          ▼                           ▼                           ▼
+┌───────────────────┐       ┌───────────────────┐       ┌───────────────────┐
+│ Hierarchical Plan │       │ Tool Sandbox      │       │ Multi-Tier Memory │
+│ - Milestones      │       │ - Cross-platform  │       │ - Working memory  │
+│ - Subtasks        │       │   Bash/Cmd/PowerSh│       │ - Scratchpad      │
+│ - Checkpoints     │       │ - FS operations   │       │ - Heuristics      │
+└───────────────────┘       └───────────────────┘       └───────────────────┘
+          │                           │                           │
+          └─────────────────────┬─────┴───────────────────────────┘
+                                ▼
+                    ┌───────────────────────┐
+                    │ Multi-Provider Router │
+                    │ - OpenRouter, Anthropic│
+                    │ - NVIDIA, Gemini, Groq│
+                    │ - Cerebras, Ollama, LM│
+                    └───────────┬───────────┘
+                                ▼
+                    ┌───────────────────────┐
+                    │ RL Trajectory Engine  │
+                    │ - Step logging & state│
+                    │ - Verifier rewards    │
+                    │ - DPO export (jsonl)  │
+                    │ - Self-Improvement loop│
+                    └───────────────────────┘
+```
 
-### 1. Hierarchical Planner & State Machine (`packages/core/src/planner`)
-- Breaks top-level ambiguous requests into verifiable milestones.
-- Maintains snapshot checkpoints (`WorkspaceCheckpoint`) enabling state rewind and resumption across multi-step horizon runs.
+## Packages
 
-### 2. Multi-Tier Context & Memory Engine (`packages/core/src/memory`)
-- **Working Memory**: Dynamic scratchpad keeping track of active thoughts.
-- **Codebase Indexing**: Fast file search and symbol discovery.
-- **Episodic Memory**: History of prior runs with success/failure tagging.
-- **Distilled Heuristics**: Persistent, reusable domain knowledge stored in `.dockyard/memory.json`.
+### 1. `@dockyard/core`
+The computational backbone of Dockyard Harness:
+- **`models/`**: Uniform model invocation layer across cloud and local providers (OpenRouter, NVIDIA, Anthropic, Gemini, Groq, Cerebras, Ollama, LMStudio).
+- **`tools/`**: Secure sandbox executing commands across POSIX shell, Windows Cmd, and PowerShell, plus guarded filesystem access.
+- **`planner/`**: Hierarchical milestone planner generating DAGs, step verification, and snapshotting.
+- **`memory/`**: Multi-tier memory engine maintaining working memory, structured scratchpad, and long-term heuristics.
+- **`rl/`**: Trajectory recorder capturing observations, actions, rewards, and critique steps, with direct export into Direct Preference Optimization (DPO) and SFT datasets.
+- **`server/`**: REST and JSON-RPC daemon enabling headless remote control and UI connectivity.
 
-### 3. Cross-Platform Execution Sandbox (`packages/core/src/tools`)
-- Path-safe filesystem read, write, and git-merge-diff editing.
-- Normalizes path resolution for Windows and macOS.
-- Safe shell execution with configurable timeout, output capping, and user approval checkpoints.
+### 2. `@dockyard/cli`
+Interactive command-line tool (`dockyard`) featuring:
+- `dockyard run <prompt>`: Execute autonomous task runs headlessly.
+- `dockyard chat`: Interactive terminal conversation with tool approval hooks.
+- `dockyard serve`: Launch the local RPC / REST harness server.
 
-### 4. RL Trajectory Engine & Self-Improvement (`packages/core/src/rl`)
-- Records structured execution trajectories: `thought -> tool call -> tool result -> state transition`.
-- Scores trajectories using unit tests, linters, goal satisfaction, and human feedback.
-- Exports DPO (Direct Preference Optimization) preference pairs.
-- Autonomous reflection loop that analyzes failures and extracts new heuristics automatically.
-
-### 5. Interfaces (`packages/cli` & `packages/desktop`)
-- CLI: Interactive REPL and command-line runner.
-- Desktop UI: Multi-view dashboard for agent interaction, plan tracking, RL inspection, and heuristic management.
+### 3. `@dockyard/desktop`
+Modern desktop dashboard for visual agent management:
+- **Agent Chat & Milestones**: Live view of plan execution, subtask states, and real-time tool logs.
+- **Multi-Provider Hub**: Configure and benchmark model providers with latency and token usage metrics.
+- **RL Trajectories & DPO Exporter**: Inspect captured trajectories, inspect critique scoring, and export paired datasets.
+- **Memory & Heuristics**: Dynamic inspection and tuning of learned heuristics.
