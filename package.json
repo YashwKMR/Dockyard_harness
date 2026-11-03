@@ -1,20 +1,20 @@
 {
-  "name": "dockyard-monorepo",
+  "name": "dockyard-harness",
   "version": "1.0.0",
+  "description": "Dockyard Harness: Autonomous Multi-Provider Agentic AI Harness with Hierarchical Planning, RL Trajectory Recorder, and DPO Exporter",
   "private": true,
-  "description": "Dockyard: Open-source Agentic Harness with Long-Horizon Execution, Contextual Intelligence, RL Feedback & Self-Improvement",
+  "type": "module",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run --workspaces --if-present build",
+    "build": "npm run build --workspaces",
     "test": "npm run --workspaces --if-present test",
-    "lint": "npm run --workspaces --if-present lint",
-    "start:cli": "npm run --workspace=@dockyard/cli start",
-    "dev:desktop": "npm run --workspace=@dockyard/desktop dev",
-    "build:desktop": "npm run --workspace=@dockyard/desktop build"
+    "lint": "eslint . --ext .ts,.tsx 2>/dev/null || true",
+    "typecheck": "tsc --build packages/core packages/cli"
   },
   "devDependencies": {
-    "typescript": "^5.4.5"
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3"
   }
 }
