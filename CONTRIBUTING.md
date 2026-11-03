@@ -1,33 +1,46 @@
-# Contributing to Dockyard
+# Contributing to Dockyard Harness
 
-Thank you for your interest in contributing to Dockyard!
+Thank you for your interest in contributing to **Dockyard Harness**! We welcome bug reports, feature requests, documentation improvements, and code contributions.
 
-## Development Workflow
+## Code of Conduct
+Please be polite, constructive, and respectful to all community members and contributors.
 
-1. Fork and clone the repository.
-2. Install dependencies:
+## Monorepo Architecture
+The repository is managed as an npm monorepo under `packages/*`:
+- `@dockyard/core`: Core harness runtime, models, planning, tools, memory, and RL trajectory recorder.
+- `@dockyard/cli`: Terminal interface and daemon launcher (`dockyard run`, `dockyard chat`, `dockyard serve`).
+- `@dockyard/desktop`: Lightweight desktop dashboard built with React + Vite.
+
+## Development Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yashwant0906/Dockyard_harness.git
+   cd Dockyard_harness
+   ```
+
+2. **Install dependencies:**
    ```bash
    npm install
    ```
-3. Build all workspace packages:
+
+3. **Build the packages:**
    ```bash
    npm run build
    ```
-4. Run the test suite:
+
+4. **Run the test suite:**
    ```bash
    npm test
    ```
 
-## Coding Guidelines
+5. **Typecheck:**
+   ```bash
+   npm run typecheck
+   ```
 
-- **TypeScript**: All core logic and CLI implementations must be strictly typed TypeScript.
-- **Cross-Platform Compatibility**: Always ensure paths and commands support both Windows (`\\` path separators, `cmd.exe`/PowerShell) and macOS/Linux (`/` path separators, bash/zsh).
-- **Testing**: Every new feature or tool must include unit and integration tests under `*.test.ts`.
-- **Git Merge Diffs**: Preserve standard format for targeted file edits.
-
-## Submitting Pull Requests
-
-1. Create a feature branch: `git checkout -b feat/my-improvement`
-2. Commit your changes with descriptive commit messages.
-3. Verify tests pass: `npm test`
-4. Open a pull request against the `main` branch.
+## Pull Request Guidelines
+- Branch naming convention: `feat/<feature-name>`, `fix/<bug-fix>`, or `docs/<topic>`.
+- Commit messages should follow Conventional Commits (e.g., `feat: ...`, `fix: ...`, `docs: ...`).
+- Ensure all tests pass across platforms (macOS, Linux, Windows).
+- If adding new features, include corresponding tests in `packages/core/src/index.test.ts` or `packages/cli/src/bin.test.ts`.
