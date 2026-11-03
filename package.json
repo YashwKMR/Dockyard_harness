@@ -1,0 +1,20 @@
+{
+  "name": "dockyard-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dockyard: Open-source Agentic Harness with Long-Horizon Execution, Contextual Intelligence, RL Feedback & Self-Improvement",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run --workspaces --if-present build",
+    "test": "npm run --workspaces --if-present test",
+    "lint": "npm run --workspaces --if-present lint",
+    "start:cli": "npm run --workspace=@dockyard/cli start",
+    "dev:desktop": "npm run --workspace=@dockyard/desktop dev",
+    "build:desktop": "npm run --workspace=@dockyard/desktop build"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

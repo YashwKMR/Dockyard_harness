@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+dist/
+build/
+.cache/
+
+# Environment and logs
+.env
+.env.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Dockyard local artifacts
+.dockyard/
+*.dockyard-session
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# OS metadata
+.DS_Store
+Thumbs.db

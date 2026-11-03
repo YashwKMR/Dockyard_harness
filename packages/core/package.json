@@ -1,0 +1,17 @@
+{
+  "name": "@dockyard/core",
+  "version": "1.0.0",
+  "description": "Dockyard Core: Long-horizon agentic harness engine with contextual intelligence, RL trajectory scoring, and self-improvement",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.5"
+  }
+}

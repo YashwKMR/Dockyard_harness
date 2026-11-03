@@ -1,0 +1,22 @@
+{
+  "name": "@dockyard/cli",
+  "version": "1.0.0",
+  "description": "Dockyard CLI: Interactive terminal interface for the Dockyard agentic harness",
+  "main": "dist/index.js",
+  "bin": {
+    "dockyard": "dist/bin.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc && chmod +x dist/bin.js || true",
+    "start": "node dist/bin.js",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@dockyard/core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.5"
+  }
+}
