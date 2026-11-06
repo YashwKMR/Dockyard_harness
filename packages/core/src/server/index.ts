@@ -1,8 +1,10 @@
 import http from 'node:http';
+import { AddressInfo } from 'node:net';
 import { AutonomousAgent, AgentConfig } from '../agent.js';
 
 export interface ServerOptions {
   port?: number;
+  host?: string;
   agentConfig?: AgentConfig;
 }
 
@@ -10,14 +12,16 @@ export class DockyardServer {
   private server?: http.Server;
   private agent: AutonomousAgent;
   private port: number;
+  private host: string;
 
   constructor(options: ServerOptions = {}) {
     this.port = options.port ?? 4000;
+    this.host = options.host ?? '127.0.0.1';
     this.agent = new AutonomousAgent(options.agentConfig);
   }
 
   public start(): Promise<number> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.server = http.createServer(async (req, res) => {
         // CORS headers
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -30,7 +34,8 @@ export class DockyardServer {
           return;
         }
 
-        const url = new URL(req.url || '/', `http://${req.headers.host}`);
+        const hostHeader = req.headers.host || `${this.host}:${this.port}`;
+        const url = new URL(req.url || '/', `http://${hostHeader}`);
 
         // Health check
         if (req.method === 'GET' && url.pathname === '/health') {
@@ -85,8 +90,14 @@ export class DockyardServer {
         res.end(JSON.stringify({ error: 'Not found' }));
       });
 
-      this.server.listen(this.port, () => {
-        resolve(this.port);
+      this.server.on('error', (err) => {
+        reject(err);
+      });
+
+      this.server.listen(this.port, this.host, () => {
+        const address = this.server?.address() as AddressInfo;
+        const actualPort = address ? address.port : this.port;
+        resolve(actualPort);
       });
     });
   }

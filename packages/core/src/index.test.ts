@@ -142,15 +142,18 @@ describe('Dockyard Core Modules', () => {
   });
 
   it('DockyardServer responds to health and RPC endpoints', async () => {
-    const server = new DockyardServer({ port: 4899, agentConfig: { workingDirectory: tmpDir } });
+    // Use dynamic port 0 and explicit 127.0.0.1 for maximum cross-platform and Node version compatibility
+    const server = new DockyardServer({ port: 0, host: '127.0.0.1', agentConfig: { workingDirectory: tmpDir } });
     const port = await server.start();
-    expect(port).toBe(4899);
+    expect(port).toBeGreaterThan(0);
 
-    const res = await fetch(`http://localhost:${port}/health`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.status).toBe('ok');
-
-    await server.stop();
-  });
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.status).toBe('ok');
+    } finally {
+      await server.stop();
+    }
+  }, 10000);
 });
