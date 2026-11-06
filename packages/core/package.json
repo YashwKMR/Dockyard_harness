@@ -1,0 +1,17 @@
+{
+  "name": "@dockyard/core",
+  "version": "1.0.0",
+  "description": "Dockyard Harness Core: Agent runtime, hierarchical planner, tools, memory, multi-provider model hub, and RL trajectory recorder",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3"
+  }
+}

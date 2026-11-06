@@ -1,0 +1,22 @@
+{
+  "name": "@dockyard/cli",
+  "version": "1.0.0",
+  "description": "Dockyard CLI: Command line interface for running tasks, interactive chat, and starting the daemon",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "dockyard": "./dist/bin.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dockyard/core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3"
+  }
+}

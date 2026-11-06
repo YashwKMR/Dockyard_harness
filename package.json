@@ -1,0 +1,20 @@
+{
+  "name": "dockyard-harness",
+  "version": "1.0.0",
+  "description": "Dockyard Harness: Autonomous Multi-Provider Agentic AI Harness with Hierarchical Planning, RL Trajectory Recorder, and DPO Exporter",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "vitest run",
+    "typecheck": "tsc --build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  }
+}
