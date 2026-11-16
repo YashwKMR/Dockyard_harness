@@ -13,8 +13,9 @@ npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 
-# Dockyard local artifacts
-.dockyard/
+# Dockyard local artifacts (run history and memory stay local; agent definitions are shared)
+.dockyard/*
+!.dockyard/agents/
 *.dockyard-session
 
 # Playwright
@@ -26,3 +27,6 @@ playwright/.cache/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# TypeScript incremental build info
+*.tsbuildinfo

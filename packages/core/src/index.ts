@@ -5,5 +5,6 @@ export * from './memory/engine.js';
 export * from './planner/hierarchical.js';
 export * from './rl/trajectory.js';
 export * from './rl/self_improvement.js';
+export * from './agents/store.js';
 export * from './agent.js';
 export * from './server/index.js';

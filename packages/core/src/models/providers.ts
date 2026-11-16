@@ -1,4 +1,13 @@
-import { ChatMessage, ModelCompletionOptions, ModelCompletionResponse, ModelProvider, ToolDefinition } from './types.js';
+import { ChatMessage, ModelCompletionOptions, ModelCompletionResponse, ModelProvider, ToolCall, ToolDefinition } from './types.js';
+import {
+  PROVIDER_CATALOG,
+  SUPPORTED_PROVIDERS,
+  SupportedProviderType,
+  getProviderInfo,
+  normalizeProvider
+} from './catalog.js';
+
+export * from './catalog.js';
 
 export class MockModelProvider implements ModelProvider {
   public name = 'mock';
@@ -21,10 +30,62 @@ export class MockModelProvider implements ModelProvider {
       return this.responses.shift()!;
     }
     return {
-      content: 'I have analyzed your workspace and everything looks sound.',
+      content: 'Simulation mode: no model provider is configured, so nothing was actually done. Set a provider API key (or pick a provider in the app) to run real tasks.',
       usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 }
     };
   }
+}
+
+const RETRYABLE_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * POST with a request timeout and bounded retries on rate limits, overload and
+ * network failures. A long agent run should survive one transient 429 or 503.
+ */
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  options: { retries?: number; timeoutMs?: number; baseDelayMs?: number } = {}
+): Promise<Response> {
+  const retries = options.retries ?? Number(process.env.DOCKYARD_MAX_RETRIES ?? 3);
+  const timeoutMs = options.timeoutMs ?? Number(process.env.DOCKYARD_REQUEST_TIMEOUT_MS ?? 300_000);
+  const baseDelayMs = options.baseDelayMs ?? 1000;
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      if (!RETRYABLE_STATUS.has(response.status) || attempt === retries) {
+        return response;
+      }
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 60_000)
+        : baseDelayMs * 2 ** attempt;
+      await response.arrayBuffer().catch(() => undefined); // release the connection
+      await sleep(delay);
+    } catch (err) {
+      lastError = err;
+      if (attempt === retries) break;
+      await sleep(baseDelayMs * 2 ** attempt);
+    }
+  }
+  throw new Error(`Model request failed after ${retries + 1} attempt(s): ${(lastError as any)?.message || lastError}`);
+}
+
+function describeApiError(provider: string, model: string, status: number, body: string): string {
+  const text = body.slice(0, 1500);
+  let hint = '';
+  if (status === 401 || status === 403) {
+    hint = ' Check that the API key for this provider is set and valid.';
+  } else if (status === 404 || /model.{0,40}(not found|does not exist|not exist|unknown|decommission|deprecat|retired)/i.test(text)) {
+    hint = ` The model "${model}" may have been renamed or retired; set DOCKYARD_MODEL (or --model) to a current ID from the provider's model list.`;
+  }
+  return `Model API error [${provider}] (${status}): ${text}${hint}`;
 }
 
 export interface OpenAICompatibleConfig {
@@ -33,7 +94,13 @@ export interface OpenAICompatibleConfig {
   model: string;
   providerName?: string;
   customHeaders?: Record<string, string>;
+  /** Which request field carries the output-token limit. Defaults to max_tokens. */
+  maxTokensParam?: 'max_tokens' | 'max_completion_tokens';
 }
+
+// Fields some vendors attach to an assistant turn and require back on the next
+// request (reasoning traces, Gemini thought signatures). They are passed through untouched.
+const MESSAGE_PASSTHROUGH = ['reasoning_content', 'reasoning_details', 'reasoning'];
 
 export class OpenAICompatibleProvider implements ModelProvider {
   public name: string;
@@ -41,6 +108,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   public baseURL: string;
   public model: string;
   public customHeaders: Record<string, string>;
+  public maxTokensParam: 'max_tokens' | 'max_completion_tokens';
 
   constructor(config: OpenAICompatibleConfig) {
     this.name = config.providerName || 'openai-compatible';
@@ -48,9 +116,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.baseURL = config.baseURL || 'https://api.openai.com/v1';
     this.model = config.model;
     this.customHeaders = config.customHeaders || {};
+    this.maxTokensParam = config.maxTokensParam || 'max_tokens';
   }
 
-  async complete(messages: ChatMessage[], options?: ModelCompletionOptions): Promise<ModelCompletionResponse> {
+  /** The JSON body sent to /chat/completions. Exposed so the wire format can be tested. */
+  buildRequestBody(messages: ChatMessage[], options?: ModelCompletionOptions): Record<string, any> {
     const formattedTools = options?.tools?.map((tool: ToolDefinition) => ({
       type: 'function',
       function: {
@@ -64,6 +134,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       const msg: any = { role: m.role, content: m.content };
       if (m.toolCalls && m.toolCalls.length > 0) {
         msg.tool_calls = m.toolCalls.map(tc => ({
+          ...(tc.providerData || {}),
           id: tc.id,
           type: 'function',
           function: {
@@ -75,9 +146,23 @@ export class OpenAICompatibleProvider implements ModelProvider {
       if (m.toolCallId) {
         msg.tool_call_id = m.toolCallId;
       }
+      if (m.role === 'assistant' && m.providerData) {
+        Object.assign(msg, m.providerData);
+      }
       return msg;
     });
 
+    const body: Record<string, any> = { model: this.model, messages: formattedMessages };
+    if (formattedTools && formattedTools.length > 0) body.tools = formattedTools;
+    // Sampling settings are sent only when asked for: several current reasoning
+    // models reject any temperature other than their default.
+    if (options?.temperature !== undefined) body.temperature = options.temperature;
+    if (options?.maxTokens !== undefined) body[this.maxTokensParam] = options.maxTokens;
+    if (options?.stopSequences?.length) body.stop = options.stopSequences;
+    return body;
+  }
+
+  async complete(messages: ChatMessage[], options?: ModelCompletionOptions): Promise<ModelCompletionResponse> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...this.customHeaders
@@ -87,48 +172,59 @@ export class OpenAICompatibleProvider implements ModelProvider {
       headers['Authorization'] = `Bearer ${this.apiKey}`;
     }
 
-    const response = await fetch(`${this.baseURL.replace(/\/$/, '')}/chat/completions`, {
+    const response = await fetchWithRetry(`${this.baseURL.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model: this.model,
-        messages: formattedMessages,
-        tools: formattedTools && formattedTools.length > 0 ? formattedTools : undefined,
-        temperature: options?.temperature ?? 0.2,
-        max_tokens: options?.maxTokens
-      })
+      body: JSON.stringify(this.buildRequestBody(messages, options))
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Model API error [${this.name}] (${response.status}): ${errText}`);
+      throw new Error(describeApiError(this.name, this.model, response.status, await response.text()));
     }
 
     const data: any = await response.json();
-    const choice = data.choices?.[0];
-    const message = choice?.message;
+    if (data?.error && !data.choices) {
+      throw new Error(describeApiError(this.name, this.model, 200, JSON.stringify(data.error)));
+    }
+    const message = data.choices?.[0]?.message;
 
-    const toolCalls = message?.tool_calls?.map((tc: any) => {
-      let args = {};
+    const toolCalls: ToolCall[] | undefined = message?.tool_calls?.map((tc: any, index: number) => {
+      let args: Record<string, any> = {};
       try {
-        args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+        const raw = tc.function?.arguments;
+        args = typeof raw === 'string' ? (raw.trim() ? JSON.parse(raw) : {}) : (raw || {});
       } catch {
-        args = { raw: tc.function.arguments };
+        args = { raw: tc.function?.arguments };
       }
-      return {
-        id: tc.id,
-        name: tc.function.name,
+      const { id, type: _type, function: _fn, index: _index, ...extra } = tc;
+      const call: ToolCall = {
+        id: id || `call_${Date.now()}_${index}`,
+        name: tc.function?.name,
         arguments: args
       };
+      if (Object.keys(extra).length > 0) call.providerData = extra;
+      return call;
     });
 
+    const providerData: Record<string, any> = {};
+    for (const key of MESSAGE_PASSTHROUGH) {
+      if (message?.[key] !== undefined && message[key] !== null) providerData[key] = message[key];
+    }
+
+    const content = typeof message?.content === 'string'
+      ? message.content
+      : Array.isArray(message?.content)
+        ? message.content.map((part: any) => (typeof part === 'string' ? part : part?.text || '')).join('')
+        : '';
+
     return {
-      content: message?.content || '',
-      toolCalls,
+      content,
+      toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+      providerData: Object.keys(providerData).length > 0 ? providerData : undefined,
       usage: data.usage ? {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens
+        promptTokens: data.usage.prompt_tokens || 0,
+        completionTokens: data.usage.completion_tokens || 0,
+        totalTokens: data.usage.total_tokens || 0
       } : undefined
     };
   }
@@ -137,36 +233,47 @@ export class OpenAICompatibleProvider implements ModelProvider {
 // Anthropic Native Adapter
 export class AnthropicProvider implements ModelProvider {
   public name = 'anthropic';
+  public model: string;
+  public baseURL: string;
   private apiKey: string;
-  private baseURL: string;
-  private model: string;
 
   constructor(config: { apiKey?: string; baseURL?: string; model?: string }) {
+    const info = getProviderInfo('anthropic');
     this.apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY || '';
-    this.baseURL = config.baseURL || process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
-    this.model = config.model || process.env.DOCKYARD_MODEL || 'claude-3-5-sonnet-20241022';
+    // The Anthropic SDKs and Claude Code treat ANTHROPIC_BASE_URL as the API root and add /v1
+    // themselves, so accept the URL with or without /v1.
+    const root = (config.baseURL || process.env.ANTHROPIC_BASE_URL || info.baseURL).replace(/\/+$/, '');
+    this.baseURL = /\/v1$/.test(root) ? root : `${root}/v1`;
+    this.model = config.model || process.env.DOCKYARD_MODEL || info.defaultModel;
   }
 
-  async complete(messages: ChatMessage[], options?: ModelCompletionOptions): Promise<ModelCompletionResponse> {
-    const systemMsg = messages.find(m => m.role === 'system')?.content || '';
-    const nonSystemMsgs = messages.filter(m => m.role !== 'system');
+  /** The JSON body sent to /messages. Exposed so the wire format can be tested. */
+  buildRequestBody(messages: ChatMessage[], options?: ModelCompletionOptions): Record<string, any> {
+    const systemMsg = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
+    const formattedMessages: { role: string; content: any }[] = [];
 
-    const formattedMessages = nonSystemMsgs.map(m => {
+    for (const m of messages) {
+      if (m.role === 'system') continue;
+
       if (m.role === 'tool') {
-        return {
-          role: 'user',
-          content: [
-            {
-              type: 'tool_result',
-              tool_use_id: m.toolCallId || 'call_0',
-              content: m.content
-            }
-          ]
+        const block = {
+          type: 'tool_result',
+          tool_use_id: m.toolCallId || 'call_0',
+          content: m.content || '(no output)',
+          ...(m.isError ? { is_error: true } : {})
         };
+        // The Messages API expects every result of one assistant turn in a single user message.
+        const prev = formattedMessages[formattedMessages.length - 1];
+        if (prev && prev.role === 'user' && Array.isArray(prev.content) && prev.content[0]?.type === 'tool_result') {
+          prev.content.push(block);
+        } else {
+          formattedMessages.push({ role: 'user', content: [block] });
+        }
+        continue;
       }
 
       if (m.toolCalls && m.toolCalls.length > 0) {
-        return {
+        formattedMessages.push({
           role: 'assistant',
           content: [
             ...(m.content ? [{ type: 'text', text: m.content }] : []),
@@ -177,14 +284,13 @@ export class AnthropicProvider implements ModelProvider {
               input: tc.arguments
             }))
           ]
-        };
+        });
+        continue;
       }
 
-      return {
-        role: m.role,
-        content: m.content
-      };
-    });
+      // The API rejects empty text content.
+      formattedMessages.push({ role: m.role, content: m.content || '(no content)' });
+    }
 
     const anthropicTools = options?.tools?.map(t => ({
       name: t.name,
@@ -192,31 +298,37 @@ export class AnthropicProvider implements ModelProvider {
       input_schema: t.parameters
     }));
 
-    const response = await fetch(`${this.baseURL.replace(/\/$/, '')}/messages`, {
+    const body: Record<string, any> = {
+      model: this.model,
+      messages: formattedMessages,
+      max_tokens: options?.maxTokens || 8192
+    };
+    if (systemMsg) body.system = systemMsg;
+    if (anthropicTools && anthropicTools.length > 0) body.tools = anthropicTools;
+    // Current Claude models reject non-default sampling settings, so only send one when asked.
+    if (options?.temperature !== undefined) body.temperature = options.temperature;
+    if (options?.stopSequences?.length) body.stop_sequences = options.stopSequences;
+    return body;
+  }
+
+  async complete(messages: ChatMessage[], options?: ModelCompletionOptions): Promise<ModelCompletionResponse> {
+    const response = await fetchWithRetry(`${this.baseURL.replace(/\/+$/, '')}/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': this.apiKey,
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify({
-        model: this.model,
-        system: systemMsg,
-        messages: formattedMessages,
-        tools: anthropicTools && anthropicTools.length > 0 ? anthropicTools : undefined,
-        max_tokens: options?.maxTokens || 4096,
-        temperature: options?.temperature ?? 0.2
-      })
+      body: JSON.stringify(this.buildRequestBody(messages, options))
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Anthropic API error (${response.status}): ${errText}`);
+      throw new Error(describeApiError(this.name, this.model, response.status, await response.text()));
     }
 
     const data: any = await response.json();
     let textContent = '';
-    const toolCalls: any[] = [];
+    const toolCalls: ToolCall[] = [];
 
     for (const block of data.content || []) {
       if (block.type === 'text') {
@@ -225,7 +337,7 @@ export class AnthropicProvider implements ModelProvider {
         toolCalls.push({
           id: block.id,
           name: block.name,
-          arguments: block.input
+          arguments: block.input || {}
         });
       }
     }
@@ -234,28 +346,13 @@ export class AnthropicProvider implements ModelProvider {
       content: textContent,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: data.usage ? {
-        promptTokens: data.usage.input_tokens,
-        completionTokens: data.usage.output_tokens,
-        totalTokens: data.usage.input_tokens + data.usage.output_tokens
+        promptTokens: data.usage.input_tokens || 0,
+        completionTokens: data.usage.output_tokens || 0,
+        totalTokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0)
       } : undefined
     };
   }
 }
-
-export type SupportedProviderType =
-  | 'openrouter'
-  | 'nvidia'
-  | 'anthropic'
-  | 'openai'
-  | 'gemini'
-  | 'minimax'
-  | 'cloudflare'
-  | 'groq'
-  | 'cerebras'
-  | 'ollama'
-  | 'lmstudio'
-  | 'vllm'
-  | 'custom';
 
 export interface ProviderFactoryConfig {
   provider?: SupportedProviderType;
@@ -267,137 +364,105 @@ export interface ProviderFactoryConfig {
   siteName?: string;
 }
 
+function firstEnv(names: string[], env: NodeJS.ProcessEnv): string {
+  for (const name of names) {
+    if (env[name]) return env[name] as string;
+  }
+  return '';
+}
+
+/** Which provider the environment points at, or undefined when nothing is configured. */
+export function detectProviderFromEnv(env: NodeJS.ProcessEnv = process.env): SupportedProviderType | undefined {
+  const explicit = (env.DOCKYARD_PROVIDER || '').trim();
+  if (explicit) {
+    const normalized = normalizeProvider(explicit);
+    if (!normalized) {
+      throw new Error(`Unknown DOCKYARD_PROVIDER "${explicit}". Supported: ${SUPPORTED_PROVIDERS.join(', ')}.`);
+    }
+    return normalized;
+  }
+  // First cloud provider with a key set wins, in catalog order; then local runners with an endpoint set.
+  for (const info of PROVIDER_CATALOG) {
+    if (info.id === 'custom' || info.local) continue;
+    if (firstEnv(info.apiKeyEnv, env)) return info.id;
+  }
+  for (const info of PROVIDER_CATALOG) {
+    if (info.local && env[info.baseURLEnv]) return info.id;
+  }
+  return undefined;
+}
+
+/** For each provider, whether this environment has what it needs to be called. */
+export function describeProviders(env: NodeJS.ProcessEnv = process.env) {
+  return PROVIDER_CATALOG.map(info => ({
+    id: info.id,
+    name: info.name,
+    category: info.category,
+    description: info.description,
+    defaultModel: info.defaultModel,
+    models: info.models,
+    local: !!info.local,
+    apiKeyEnv: info.apiKeyEnv,
+    baseURL: env[info.baseURLEnv] || info.baseURL,
+    configured: info.local ? true : !!firstEnv(info.apiKeyEnv, env)
+  }));
+}
+
+/**
+ * Build the provider the environment asks for. Falls back to the scripted
+ * MockModelProvider (no real model, no tool use) when nothing is configured.
+ */
+export function createProviderFromEnv(env: NodeJS.ProcessEnv = process.env): { model: ModelProvider; provider: SupportedProviderType | 'mock'; modelName: string } {
+  const provider = detectProviderFromEnv(env);
+  if (!provider) {
+    return { model: new MockModelProvider(), provider: 'mock', modelName: 'simulation' };
+  }
+  const model = createModelProvider({ provider, model: env.DOCKYARD_MODEL, baseURL: env.DOCKYARD_BASE_URL });
+  return { provider, model, modelName: (model as any).model || '' };
+}
+
 export function createModelProvider(config: ProviderFactoryConfig): ModelProvider {
-  const provider = config.provider || 'openai';
-
-  // 1. OpenRouter
-  if (provider === 'openrouter') {
-    const apiKey = config.apiKey || process.env.OPENROUTER_API_KEY || '';
-    const baseURL = config.baseURL || process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-    const model = config.model || process.env.DOCKYARD_MODEL || 'deepseek/deepseek-chat';
-    return new OpenAICompatibleProvider({
-      providerName: 'openrouter',
-      apiKey,
-      baseURL,
-      model,
-      customHeaders: {
-        'HTTP-Referer': config.siteUrl || 'https://github.com/dockyard-org/dockyard',
-        'X-Title': config.siteName || 'Dockyard Harness'
-      }
-    });
-  }
-
-  // 2. NVIDIA NIM
-  if (provider === 'nvidia') {
-    return new OpenAICompatibleProvider({
-      providerName: 'nvidia',
-      apiKey: config.apiKey || process.env.NVIDIA_API_KEY || '',
-      baseURL: config.baseURL || process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'meta/llama-3.3-70b-instruct'
-    });
-  }
-
-  // 3. Anthropic Claude
-  if (provider === 'anthropic') {
-    return new AnthropicProvider({
-      apiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
-      baseURL: config.baseURL || process.env.ANTHROPIC_BASE_URL,
-      model: config.model || process.env.DOCKYARD_MODEL || 'claude-3-5-sonnet-20241022'
-    });
-  }
-
-  // 4. Google Gemini (via OpenAI-compatible endpoint)
-  if (provider === 'gemini') {
-    return new OpenAICompatibleProvider({
-      providerName: 'gemini',
-      apiKey: config.apiKey || process.env.GEMINI_API_KEY || '',
-      baseURL: config.baseURL || process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/',
-      model: config.model || process.env.DOCKYARD_MODEL || 'gemini-1.5-pro'
-    });
-  }
-
-  // 5. MiniMax
-  if (provider === 'minimax') {
-    return new OpenAICompatibleProvider({
-      providerName: 'minimax',
-      apiKey: config.apiKey || process.env.MINIMAX_API_KEY || '',
-      baseURL: config.baseURL || process.env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'abab6.5s-chat'
-    });
-  }
-
-  // 6. Cloudflare Workers AI
-  if (provider === 'cloudflare') {
-    const accountId = config.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || 'account_id';
-    return new OpenAICompatibleProvider({
-      providerName: 'cloudflare',
-      apiKey: config.apiKey || process.env.CLOUDFLARE_API_KEY || '',
-      baseURL: config.baseURL || `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
-      model: config.model || process.env.DOCKYARD_MODEL || '@cf/meta/llama-3.3-70b-instruct'
-    });
-  }
-
-  // 7. Groq
-  if (provider === 'groq') {
-    return new OpenAICompatibleProvider({
-      providerName: 'groq',
-      apiKey: config.apiKey || process.env.GROQ_API_KEY || '',
-      baseURL: config.baseURL || process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'llama-3.3-70b-versatile'
-    });
-  }
-
-  // 8. Cerebras
-  if (provider === 'cerebras') {
-    return new OpenAICompatibleProvider({
-      providerName: 'cerebras',
-      apiKey: config.apiKey || process.env.CEREBRAS_API_KEY || '',
-      baseURL: config.baseURL || process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'llama3.1-70b'
-    });
-  }
-
-  // 9. Local AI Models (Ollama, LM Studio, vLLM)
-  if (provider === 'ollama') {
-    return new OpenAICompatibleProvider({
-      providerName: 'ollama',
-      apiKey: config.apiKey || 'ollama',
-      baseURL: config.baseURL || process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'deepseek-coder-v2'
-    });
-  }
-
-  if (provider === 'lmstudio') {
-    return new OpenAICompatibleProvider({
-      providerName: 'lmstudio',
-      apiKey: config.apiKey || 'lm-studio',
-      baseURL: config.baseURL || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'local-model'
-    });
-  }
-
-  if (provider === 'vllm') {
-    return new OpenAICompatibleProvider({
-      providerName: 'vllm',
-      apiKey: config.apiKey || 'vllm',
-      baseURL: config.baseURL || process.env.VLLM_BASE_URL || 'http://localhost:8000/v1',
-      model: config.model || process.env.DOCKYARD_MODEL || 'default'
-    });
-  }
-
-  // 10. OpenAI / OpenAI-compatible fallback
-  const apiKey = config.apiKey || process.env.OPENAI_API_KEY || '';
-  const baseURL = config.baseURL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-  const model = config.model || process.env.DOCKYARD_MODEL || 'gpt-4o';
-
-  if (!apiKey && !config.baseURL && !config.provider) {
+  // With nothing at all specified, stay in simulation rather than calling an API without a key.
+  if (!config.provider && !config.apiKey && !config.baseURL && !process.env.OPENAI_API_KEY) {
     return new MockModelProvider();
   }
 
+  const provider = config.provider ? normalizeProvider(config.provider) : 'openai';
+  if (!provider) {
+    throw new Error(`Unknown provider "${config.provider}". Supported: ${SUPPORTED_PROVIDERS.join(', ')}.`);
+  }
+  const info = getProviderInfo(provider);
+  const env = process.env;
+
+  const apiKey = config.apiKey || firstEnv(info.apiKeyEnv, env) || (info.local ? info.id : '');
+  const model = config.model || env.DOCKYARD_MODEL || info.defaultModel;
+  let baseURL = config.baseURL || env[info.baseURLEnv] || info.baseURL;
+
+  if (provider === 'cloudflare') {
+    const accountId = config.accountId || env.CLOUDFLARE_ACCOUNT_ID || '';
+    if (baseURL.includes('{accountId}')) {
+      if (!accountId) {
+        throw new Error('Cloudflare Workers AI needs CLOUDFLARE_ACCOUNT_ID (your account ID) as well as the API key.');
+      }
+      baseURL = baseURL.replace('{accountId}', accountId);
+    }
+  }
+
+  if (info.protocol === 'anthropic') {
+    return new AnthropicProvider({ apiKey, baseURL, model });
+  }
+
   return new OpenAICompatibleProvider({
-    providerName: 'openai',
+    providerName: provider,
     apiKey,
     baseURL,
-    model
+    model,
+    maxTokensParam: info.maxTokensParam,
+    customHeaders: provider === 'openrouter'
+      ? {
+          'HTTP-Referer': config.siteUrl || 'https://github.com/YashwKMR/Dockyard_harness',
+          'X-Title': config.siteName || 'Dockyard Harness'
+        }
+      : undefined
   });
 }

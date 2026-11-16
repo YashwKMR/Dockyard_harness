@@ -7,6 +7,20 @@ export interface ReflectionResult {
   critique: string;
   identifiedHeuristics: string[];
   suggestedAction: string;
+  /** 'model' when the critique came from the model, 'fallback' when it is a factual summary only. */
+  source: 'model' | 'fallback';
+}
+
+const MAX_HEURISTICS_PER_RUN = 5;
+const MAX_HEURISTIC_CHARS = 240;
+
+function cleanHeuristics(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((h): h is string => typeof h === 'string')
+    .map(h => h.replace(/\s+/g, ' ').trim())
+    .filter(h => h.length > 0 && h.length <= MAX_HEURISTIC_CHARS)
+    .slice(0, MAX_HEURISTICS_PER_RUN);
 }
 
 export class SelfImprovementLoop {
@@ -23,21 +37,22 @@ export class SelfImprovementLoop {
     const succeeded = trajectory.finalReward > 0.5;
 
     const summaryOfSteps = trajectory.steps.map(s => {
-      const tool = s.toolCall ? `${s.toolCall.name}(${JSON.stringify(s.toolCall.arguments)})` : 'none';
-      const status = s.toolResult ? (s.toolResult.isError ? `FAILED: ${s.toolResult.error}` : 'SUCCESS') : 'no_result';
-      return `- Step ${s.stepIndex}: ${s.thought || 'thought'} | Tool: ${tool} | Status: ${status}`;
+      const tool = s.toolCall ? `${s.toolCall.name}(${JSON.stringify(s.toolCall.arguments).slice(0, 300)})` : 'none';
+      const status = s.toolResult ? (s.toolResult.isError ? `FAILED: ${String(s.toolResult.error).slice(0, 300)}` : 'SUCCESS') : 'no_result';
+      return `- Step ${s.stepIndex}: ${(s.thought || '').slice(0, 300)} | Tool: ${tool} | Status: ${status}`;
     }).join('\n');
 
     const prompt = `You are the Dockyard Self-Improvement and Reflection Engine.
 Analyze the following agent execution trajectory for task: "${trajectory.task}".
 Score / Reward: ${trajectory.finalReward}
+Measured signals: ${JSON.stringify(trajectory.rewardBreakdown)}
 Steps:
 ${summaryOfSteps}
 
 Provide a concise reflection in JSON format with:
 - "succeeded": boolean
 - "critique": string explaining what worked and what went wrong
-- "identifiedHeuristics": array of strings with reusable rules or strategies to remember
+- "identifiedHeuristics": array of at most ${MAX_HEURISTICS_PER_RUN} short strings with reusable rules for THIS repository. Return an empty array if nothing reusable was learned.
 - "suggestedAction": string recommendation for future tasks`;
 
     try {
@@ -46,58 +61,51 @@ Provide a concise reflection in JSON format with:
         { role: 'user', content: prompt }
       ]);
 
-      let jsonMatch = resp.content.match(/\{[\s\S]*\}/);
+      const jsonMatch = resp.content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        // Update memory engine automatically with newly learned heuristics
-        if (Array.isArray(parsed.identifiedHeuristics)) {
-          for (const h of parsed.identifiedHeuristics) {
-            this.memory.addHeuristic(h);
-          }
+        const heuristics = cleanHeuristics(parsed.identifiedHeuristics);
+        for (const h of heuristics) {
+          this.memory.addHeuristic(h);
         }
+        const critique = typeof parsed.critique === 'string' && parsed.critique ? parsed.critique : 'Evaluated trajectory';
         this.memory.addEpisodicMemory({
           task: trajectory.task,
           outcome: succeeded ? 'success' : 'failure',
-          learnedLesson: parsed.critique || 'Evaluated trajectory',
+          learnedLesson: critique.slice(0, 600),
           tags: ['self-improvement', succeeded ? 'success' : 'failure']
         });
         await this.memory.save();
 
         return {
           succeeded: !!parsed.succeeded,
-          critique: parsed.critique || 'Analysis complete',
-          identifiedHeuristics: parsed.identifiedHeuristics || [],
-          suggestedAction: parsed.suggestedAction || 'Continue iterative refinement'
+          critique,
+          identifiedHeuristics: heuristics,
+          suggestedAction: typeof parsed.suggestedAction === 'string' && parsed.suggestedAction ? parsed.suggestedAction : 'Continue iterative refinement',
+          source: 'model'
         };
       }
     } catch {
-      // Fallback rule-based reflection
+      // fall through to the factual summary below
     }
 
-    // Heuristic fallback
-    const fallbackHeuristics: string[] = [];
-    if (errorCount > 0) {
-      fallbackHeuristics.push(`Inspect files with read_file before attempting edit_file_diff to prevent search block mismatches.`);
-    } else {
-      fallbackHeuristics.push(`Direct command verification and automated linting confirm task completion effectively.`);
-    }
-
-    for (const h of fallbackHeuristics) {
-      this.memory.addHeuristic(h);
-    }
+    // No usable critique from the model. Record what happened, and do not invent lessons:
+    // anything stored as a heuristic is injected into every future prompt.
+    const facts = `${trajectory.steps.length} step(s), ${errorCount} tool error(s), reward ${trajectory.finalReward.toFixed(2)}.`;
     this.memory.addEpisodicMemory({
       task: trajectory.task,
       outcome: succeeded ? 'success' : 'failure',
-      learnedLesson: succeeded ? 'Task completed cleanly with positive reward.' : 'Encountered execution errors, retry recommended.',
-      tags: ['reflection']
+      learnedLesson: facts,
+      tags: ['reflection-fallback', succeeded ? 'success' : 'failure']
     });
     await this.memory.save();
 
     return {
       succeeded,
-      critique: succeeded ? 'Execution completed within acceptable parameters.' : `Encountered ${errorCount} tool execution errors during run.`,
-      identifiedHeuristics: fallbackHeuristics,
-      suggestedAction: succeeded ? 'Persist successful trajectory patterns.' : 'Improve tool parameter validation.'
+      critique: `No model critique available. ${facts}`,
+      identifiedHeuristics: [],
+      suggestedAction: errorCount > 0 ? 'Review the failed tool calls in the trajectory.' : 'None.',
+      source: 'fallback'
     };
   }
 }
