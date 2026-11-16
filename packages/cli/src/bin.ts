@@ -122,14 +122,14 @@ function ask(rl: readline.Interface, question: string): Promise<string> {
 /** Ask the person at the terminal before a tool writes files or runs a command. */
 function makeApprover(shared?: readline.Interface) {
   let allowAll = false;
-  return async (toolName: string, toolArgs: Record<string, any>): Promise<boolean> => {
+  return async (toolName: string, toolArgs: Record<string, any>, agentName?: string): Promise<boolean> => {
     if (allowAll) return true;
     if (!process.stdin.isTTY) {
       console.log(`\n[Blocked] "${toolName}" needs approval but no terminal is attached. Re-run with --yes to allow it.`);
       return false;
     }
     const preview = JSON.stringify(toolArgs);
-    console.log(`\n[Approval needed] ${toolName} ${preview.length > 600 ? preview.slice(0, 600) + '...' : preview}`);
+    console.log(`\n[Approval needed]${agentName && agentName !== 'dockyard' ? ` (${agentName})` : ''} ${toolName} ${preview.length > 600 ? preview.slice(0, 600) + '...' : preview}`);
     const rl = shared ?? readline.createInterface({ input: process.stdin, output: process.stdout });
     try {
       const answer = await ask(rl, 'Allow? [y]es / [n]o / [a]lways for this session: ');

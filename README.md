@@ -1,70 +1,78 @@
 # Dockyard Harness
 
-> **Open-Source Autonomous Coding Harness & Agent Engine**  
-> Built for Long-Horizon Engineering, Contextual Intelligence, Reinforcement Learning (RL) Signals, and Continuous Self-Improvement. Fully cross-platform on **macOS**, **Windows** (PowerShell / CMD), and **Linux**.
+A coding agent that works inside your project folder. You describe a task; it plans the steps, reads and edits files and runs commands, and asks before each change unless you turn that off. It works with 15 model providers, cloud or local, and can hand parts of a task to teammate agents you define.
+
+Every run is recorded and scored. Dockyard keeps the rules it learns about your project and uses them in later tasks, and it can export pairs of good and bad runs as training data (DPO).
+
+Runs on macOS, Windows and Linux with Node 20 or later. MIT licensed.
 
 ---
 
-## Visual Overview
+## Screenshots
 
-### 1. Autonomous Agent Execution & Hierarchical Planning
-Dockyard breaks complex user objectives into milestones and steps, tracks real-time state, and logs all tool executions:
+**Approving a change.** Every file write and command waits for you. Edits are shown as a diff; press `y` to allow or `n` to deny.
 
-![Dockyard Agent Workspace](docs/images/dockyard_agent_tab.png)
+![Dockyard waiting for approval of an edit, with the plan and teammates in the sidebar](docs/images/session-approval.png)
 
-### 2. Multi-Provider & Local Model Hub
-Seamlessly route prompts to all major cloud AI providers or run fully offline on local inference runners:
+**Working with a teammate.** The lead agent hands the review to a read-only `reviewer` agent. The task only counts as done once the verify command (`npm test` here) passes.
 
-![Model & API Provider Routing](docs/images/dockyard_providers_tab.png)
+![A finished task: the edit, the handoff to the reviewer, and npm test passing](docs/images/session-teammate.png)
 
-### 3. Reinforcement Learning Trajectories & DPO Export
-Inspect step-by-step thoughts, tool actions, verifier scores, and export Direct Preference Optimization (DPO) datasets:
+<details>
+<summary>More screens: command palette, models, agents, sessions, memory</summary>
 
-![RL Trajectories and Reward Modeling](docs/images/dockyard_trajectories_tab.png)
+**Command palette** (`ctrl+p`): every action in one searchable list.
 
----
+![Command palette](docs/images/palette.png)
 
-## Key Capabilities
+**Models**: the provider and model for the next task, and which providers have a key set.
 
-- **CLI & Desktop Interfaces**:
-  - Unified architecture with an interactive CLI terminal (`dockyard`) and a modern Desktop UI (`@dockyard/desktop`).
-  - Seamless support for **macOS** and **Windows** (normalizes `\` and `/` file paths, PowerShell, CMD, Bash).
-- **All Major Model Providers**:
-  - **OpenRouter**: One key for models from many vendors.
-  - **Anthropic**: Claude Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.2 through the native Messages API.
-  - **OpenAI**: GPT-6 family (`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-luna`).
-  - **Google Gemini**: Gemini 4 (`gemini-4-argon`) and Gemini 3.8 Flash.
-  - **Z.ai GLM (Zhipu)**: GLM-5.3 and GLM-5.3-Flash.
-  - **Alibaba Qwen**: Qwen3.8-Max and Flash on DashScope.
-  - **MiniMax**: M3 and M3.1-Flash.
-  - **DeepSeek**: V4 Pro and V4 Flash, direct.
-  - **NVIDIA NIM**: Hosted open models such as Nemotron 3 Super.
-  - **Cloudflare Workers AI**: Edge inference across global servers.
-  - **Groq & Cerebras**: Ultra-low latency, high-throughput engines.
-  - **Local AI Models**: Offline inference with **Ollama** (`localhost:11434`), **LM Studio** (`localhost:1234`), and **vLLM** (`localhost:8000`).
-- **Permission Modes**: `read-only`, `ask` (confirm before any file write or command) and `auto`. File tools are confined to the workspace, including through symlinks.
-- **Custom Agents & Teammates**: Define reusable agents with their own role, tool allowlist, model and memory; the lead agent hands work to them with `delegate_task`.
-- **Project Instructions**: An `AGENTS.md` in the workspace root is loaded into every run.
-- **Long-Horizon Agentic Work**: The agent keeps a live step plan (`update_plan`), with a checkpoint recorded as each step completes.
-- **Contextual Intelligence & Memory**: Episodic memories across sessions and persistent repo-specific heuristics, kept separately for each named agent.
-- **Reinforcement Learning (RL) Signals & Trajectories**: Logging of thought-action-result trajectories, a reward built only from measured signals (self-reported completion, a verify command such as your test suite, tool errors, human feedback), and export of DPO (Direct Preference Optimization) preference pairs.
-- **Self-Improvement Loop**: Post-trajectory critique passes that extract reusable rules, saving them into `.dockyard/memory.json`.
+![Models view](docs/images/models.png)
+
+**Agents**: teammates, each with its own role, tools and permission cap.
+
+![Agents view](docs/images/agents.png)
+
+**Sessions**: every run with its steps and reward. Rate runs and export DPO pairs from here.
+
+![Sessions view](docs/images/sessions.png)
+
+**Memory**: rules learned for this workspace, added to future prompts. Forget any that are wrong.
+
+![Memory view](docs/images/memory.png)
+
+</details>
+
+Screenshots show the app running in a small demo project, with the model's replies scripted for the demo.
 
 ---
 
-## Monorepo Architecture
+## What it does
+
+- **Works step by step.** It keeps a plan you can watch, reads and searches the code, edits files and runs commands. Its file tools can't reach outside the project folder.
+- **Asks before changing anything.** `read-only` lets it look but not touch. `ask` (the default in the app and the terminal) waits for you to approve each file write and command. `auto` doesn't ask. Commands aren't sandboxed, so use `auto` only where you're comfortable letting it make changes.
+- **Checks its work.** Give it a verify command such as `npm test`, and a task only counts as done when that passes.
+- **Hands work to teammates.** Define agents with their own instructions, tools, model and permission limit, such as a read-only reviewer. The lead agent delegates to them, and a teammate never gets more access than the agent that asked.
+- **Follows your project's rules.** An `AGENTS.md` file in the project folder is added to every task.
+- **Learns from each run.** After a task it notes reusable rules for that project, which you can review and delete. You can rate runs good or bad, and export good and bad runs of the same task for fine-tuning (DPO).
+- **Works with many models.** OpenAI, Anthropic, Google Gemini, Z.ai GLM, Alibaba Qwen, MiniMax, DeepSeek, OpenRouter, NVIDIA NIM, Cloudflare Workers AI, Groq and Cerebras; local models through Ollama, LM Studio and vLLM; or any OpenAI-compatible endpoint. Model names and endpoints live in one file, so they're easy to update.
+- **Three ways to use it.** A browser app (`dockyard app`), the terminal (`dockyard run`, `dockyard chat`), or a local API for your own scripts.
+
+---
+
+## Repository layout
 
 ```
 Dockyard_harness/
 ├── packages/
-│   ├── core/         # Agent loop, model providers, cross-platform tools, memory, RL & planner
-│   ├── cli/          # Interactive terminal REPL, task runner, and local RPC server
-│   └── desktop/      # React + Vite desktop-ready app with visual plan, chat, RL & provider routing
+│   ├── core/         # Agent loop, model catalog and providers, tools, memory, rewards, local server
+│   ├── cli/          # The dockyard command: run, chat, agent, models, export-dpo, serve, app
+│   └── desktop/      # The browser app (React + Vite) that dockyard app serves
 ├── docs/
-│   └── images/       # Screenshots and visual documentation
+│   └── images/       # Screenshots
 ├── .github/
-│   └── workflows/    # Multi-OS CI testing matrix (macOS, Windows, Ubuntu)
-├── LICENSE           # MIT License
+│   └── workflows/    # CI on Linux, macOS and Windows
+├── LICENSE           # MIT
 └── README.md
 ```
 
