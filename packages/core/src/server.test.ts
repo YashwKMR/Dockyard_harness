@@ -237,3 +237,44 @@ test('Server: serves the app files without a token but never the API', async () 
     await fs.rm(path.join(ui, '..', 'outside-secret.txt'), { force: true });
   }
 });
+
+test('Server: a teammate handoff shows when it starts, and approvals say which agent is asking', async () => {
+  const model = new MockModelProvider([
+    { content: 'Handing off', toolCalls: [{ id: 'd1', name: 'delegate_task', arguments: { agent: 'builder', task: 'Create out.txt' } }] },
+    { content: 'Writing', toolCalls: [{ id: 'b1', name: 'write_file', arguments: { filepath: 'out.txt', content: 'x' } }] },
+    { content: 'Done writing.' },
+    { content: 'not json' }, // the teammate's reflection pass
+    { content: 'The builder created out.txt.' }
+  ]);
+  const s = await start({ model, mode: 'ask' });
+  try {
+    const post = (route: string, body: unknown) => fetch(`${s.base}${route}`, { method: 'POST', headers: s.auth, body: JSON.stringify(body) });
+    const current = async () => (await fetch(`${s.base}/api/run/current`, { headers: s.auth })).json() as Promise<any>;
+    assert.equal((await post('/api/agents', { name: 'builder', description: 'Writes files', instructions: 'Build.' })).status, 200);
+    await post('/api/run', { task: 'make out.txt', wait: false });
+
+    let state: any;
+    for (let i = 0; i < 200 && !state?.pendingApproval; i++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      state = await current();
+    }
+    assert.equal(state.pendingApproval.agent, 'builder', 'the request is attributed to the teammate, not the lead');
+    const handoff = state.events.find((e: any) => e.kind === 'delegate');
+    assert.equal(handoff?.args.agent, 'builder', 'the handoff is visible while the teammate is still working');
+
+    await post('/api/approve', { id: state.pendingApproval.id, allow: true });
+    for (let i = 0; i < 200 && (state.running || !state.result); i++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      state = await current();
+    }
+    assert.equal(state.result.succeeded, true);
+    const order = state.events.map((e: any) => `${e.kind}:${e.agent ?? ''}:${e.tool ?? ''}`);
+    const start_ = order.indexOf('delegate:dockyard:delegate_task');
+    const work = order.indexOf('tool:builder:write_file');
+    const done = order.indexOf('tool:dockyard:delegate_task');
+    assert.ok(start_ >= 0 && start_ < work && work < done, order.join(' | '));
+    assert.equal(await fs.readFile(path.join(s.dir, 'out.txt'), 'utf-8'), 'x');
+  } finally {
+    await s.stop();
+  }
+});

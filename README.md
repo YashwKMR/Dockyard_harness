@@ -5,22 +5,42 @@
 
 ---
 
-## Visual Overview
+## Screenshots
 
-### 1. Autonomous Agent Execution & Hierarchical Planning
-Dockyard breaks complex user objectives into milestones and steps, tracks real-time state, and logs all tool executions:
+**Approving a change.** Every file write and command waits for you. Edits are shown as a diff; press `y` to allow or `n` to deny.
 
-![Dockyard Agent Workspace](docs/images/dockyard_agent_tab.png)
+![Dockyard waiting for approval of an edit, with the plan and teammates in the sidebar](docs/images/session-approval.png)
 
-### 2. Multi-Provider & Local Model Hub
-Seamlessly route prompts to all major cloud AI providers or run fully offline on local inference runners:
+**Working with a teammate.** The lead agent hands the review to a read-only `reviewer` agent. The task only counts as done once the verify command (`npm test` here) passes.
 
-![Model & API Provider Routing](docs/images/dockyard_providers_tab.png)
+![A finished task: the edit, the handoff to the reviewer, and npm test passing](docs/images/session-teammate.png)
 
-### 3. Reinforcement Learning Trajectories & DPO Export
-Inspect step-by-step thoughts, tool actions, verifier scores, and export Direct Preference Optimization (DPO) datasets:
+<details>
+<summary>More screens: command palette, models, agents, sessions, memory</summary>
 
-![RL Trajectories and Reward Modeling](docs/images/dockyard_trajectories_tab.png)
+**Command palette** (`ctrl+p`): every action in one searchable list.
+
+![Command palette](docs/images/palette.png)
+
+**Models**: the provider and model for the next task, and which providers have a key set.
+
+![Models view](docs/images/models.png)
+
+**Agents**: teammates, each with its own role, tools and permission cap.
+
+![Agents view](docs/images/agents.png)
+
+**Sessions**: every run with its steps and reward. Rate runs and export DPO pairs from here.
+
+![Sessions view](docs/images/sessions.png)
+
+**Memory**: rules learned for this workspace, added to future prompts. Forget any that are wrong.
+
+![Memory view](docs/images/memory.png)
+
+</details>
+
+Screenshots show the app running in a small demo project, with the model's replies scripted for the demo.
 
 ---
 

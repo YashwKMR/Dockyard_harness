@@ -25,10 +25,13 @@ export interface DockyardAgentConfig {
   maxIterations?: number;
   /** read-only | ask | auto. Defaults to 'ask' when requireApproval is given, otherwise 'auto'. */
   mode?: PermissionMode;
-  requireApproval?: (toolName: string, args: Record<string, any>) => Promise<boolean>;
+  /** Asked before a tool writes files or runs a command. agentName says which agent (lead or teammate) is asking. */
+  requireApproval?: (toolName: string, args: Record<string, any>, agentName?: string) => Promise<boolean>;
   onStepProgress?: (step: PlanStep) => void;
   onStreamContent?: (chunk: string) => void;
   onToolCall?: (agentName: string, call: ToolCall, result: ToolResult) => void;
+  /** Called just before a tool runs, so a teammate handoff can be shown as it starts. */
+  onToolStart?: (agentName: string, call: ToolCall) => void;
   /**
    * Shell command that decides whether the work is actually done (e.g. "npm test").
    * Runs after the agent reports completion; its exit status is the `testsPassed` signal.
@@ -99,10 +102,11 @@ export class DockyardAgent {
 
   private baseTools: ToolRegistry;
   private maxIterations: number;
-  private requireApproval?: (toolName: string, args: Record<string, any>) => Promise<boolean>;
+  private requireApproval?: (toolName: string, args: Record<string, any>, agentName?: string) => Promise<boolean>;
   private onStepProgress?: (step: PlanStep) => void;
   private onStreamContent?: (chunk: string) => void;
   private onToolCall?: (agentName: string, call: ToolCall, result: ToolResult) => void;
+  private onToolStart?: (agentName: string, call: ToolCall) => void;
   private verifyCommand?: string;
   private depth: number;
   private maxDelegationDepth: number;
@@ -129,6 +133,7 @@ export class DockyardAgent {
     this.onStepProgress = config.onStepProgress;
     this.onStreamContent = config.onStreamContent;
     this.onToolCall = config.onToolCall;
+    this.onToolStart = config.onToolStart;
     this.verifyCommand = config.verifyCommand?.trim() || undefined;
     this.depth = config.depth ?? 0;
     this.maxDelegationDepth = config.maxDelegationDepth ?? 2;
@@ -266,7 +271,8 @@ export class DockyardAgent {
             maxIterations: def.maxIterations ?? this.maxIterations,
             reflect: this.reflect,
             projectInstructions: this.projectInstructions,
-            onToolCall: this.onToolCall
+            onToolCall: this.onToolCall,
+            onToolStart: this.onToolStart
           });
           const res = await child.run(String(args.task));
           const header = `Teammate "${def.name}" ${res.succeeded ? 'completed the task' : `did not complete the task (${res.stopReason})`} ` +
@@ -357,6 +363,8 @@ Permission mode: ${this.mode}${this.mode === 'read-only' ? ' (you cannot write f
       workspaceRoot: this.workspaceRoot,
       mode: this.mode,
       requireApproval: this.requireApproval
+        ? (toolName, args) => this.requireApproval!(toolName, args, this.name)
+        : undefined
     };
 
     let messages: ChatMessage[];
@@ -412,6 +420,7 @@ Permission mode: ${this.mode}${this.mode === 'read-only' ? ' (you cannot write f
         });
 
         for (const tc of response.toolCalls) {
+          this.onToolStart?.(this.name, tc);
           const toolResult = await this.tools.execute(tc.name, tc.arguments, toolContext, tc.id);
           this.trajectoryRecorder.recordStep(response.content, tc, toolResult);
           this.onToolCall?.(this.name, tc, toolResult);

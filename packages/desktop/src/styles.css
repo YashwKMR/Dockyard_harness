@@ -323,6 +323,18 @@ button:disabled {
   color: var(--muted);
 }
 
+.permission pre .del {
+  color: var(--error);
+}
+
+.permission pre .add {
+  color: var(--success);
+}
+
+.permission pre.cmd {
+  color: var(--text);
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -489,7 +501,7 @@ input::placeholder {
 }
 
 .palette .list {
-  max-height: 46vh;
+  max-height: min(64vh, 560px);
   overflow-y: auto;
   padding-bottom: 6px;
 }
@@ -527,6 +539,8 @@ input::placeholder {
 .row.selected {
   background: var(--panel);
   box-shadow: inset 2px 0 0 var(--primary);
+  /* Extend the highlight outwards so the row's columns stay aligned with the rows around it. */
+  margin: 0 -10px;
   padding-left: 10px;
   padding-right: 10px;
 }

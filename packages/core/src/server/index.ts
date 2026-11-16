@@ -53,7 +53,7 @@ class HttpError extends Error {
 
 interface RunEvent {
   at: number;
-  kind: 'info' | 'thought' | 'tool' | 'plan' | 'approval' | 'result' | 'error';
+  kind: 'info' | 'thought' | 'tool' | 'delegate' | 'plan' | 'approval' | 'result' | 'error';
   agent?: string;
   text: string;
   ok?: boolean;
@@ -67,6 +67,8 @@ interface PendingApproval {
   id: string;
   tool: string;
   args: Record<string, any>;
+  /** The agent asking: the lead, or a teammate it handed work to. */
+  agent?: string;
   resolve: (allowed: boolean) => void;
 }
 
@@ -172,7 +174,7 @@ export function createDockyardServer(options: ServerOptions) {
       events: run.events,
       plan: run.plan,
       steps: run.result ? run.result.trajectory.steps : active?.steps || [],
-      pendingApproval: run.pending ? { id: run.pending.id, tool: run.pending.tool, args: run.pending.args } : null,
+      pendingApproval: run.pending ? { id: run.pending.id, tool: run.pending.tool, args: run.pending.args, agent: run.pending.agent } : null,
       result: run.result
         ? {
             succeeded: run.result.succeeded,
@@ -267,16 +269,26 @@ export function createDockyardServer(options: ServerOptions) {
       agentStore,
       verifyCommand,
       maxIterations: Number.isInteger(maxSteps) && maxSteps > 0 && maxSteps <= 200 ? maxSteps : undefined,
-      requireApproval: (tool, args) =>
+      requireApproval: (tool, args, agent) =>
         new Promise<boolean>(resolve => {
           const id = `apr-${randomBytes(4).toString('hex')}`;
-          run.pending = { id, tool, args, resolve };
-          emit({ kind: 'approval', text: `Waiting for approval: ${tool} ${clip(args)}` });
+          run.pending = { id, tool, args, agent, resolve };
+          emit({ kind: 'approval', agent, text: `Waiting for approval: ${tool} ${clip(args)}` });
         }),
       onStreamContent: text => emit({ kind: 'thought', agent: run.agentName, text: clip(text, 2000) }),
       onStepProgress: step => {
         run.plan = run.agent.planner.getSteps();
         emit({ kind: 'plan', text: `${step.status}: ${step.title}` });
+      },
+      onToolStart: (who: string, call: ToolCall) => {
+        if (call.name !== 'delegate_task') return;
+        emit({
+          kind: 'delegate',
+          agent: who,
+          tool: call.name,
+          args: displayArgs(call.arguments),
+          text: `${who} -> ${call.arguments?.agent}: ${clip(call.arguments?.task ?? '', 300)}`
+        });
       },
       onToolCall: (who: string, call: ToolCall, result: ToolResult) => {
         emit({

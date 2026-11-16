@@ -45,7 +45,7 @@ interface TrajectoryView {
 
 interface RunEvent {
   at: number;
-  kind: 'info' | 'thought' | 'tool' | 'plan' | 'approval' | 'result' | 'error';
+  kind: 'info' | 'thought' | 'tool' | 'delegate' | 'plan' | 'approval' | 'result' | 'error';
   agent?: string;
   text: string;
   ok?: boolean;
@@ -64,7 +64,7 @@ interface RunView {
   agent?: string;
   events?: RunEvent[];
   plan?: { id: string; title: string; status: string }[];
-  pendingApproval?: { id: string; tool: string; args: any } | null;
+  pendingApproval?: { id: string; tool: string; args: any; agent?: string } | null;
   result?: {
     succeeded: boolean;
     summary: string;
@@ -156,6 +156,38 @@ function describeTool(tool: string, args: Record<string, any> = {}): string {
     default:
       return `${tool} ${JSON.stringify(args)}`;
   }
+}
+
+/** What an approval request will do, in the form a person reviews it: a diff, the new file, or the command. */
+function preview(tool: string, args: Record<string, any> = {}): React.ReactNode {
+  if (tool === 'edit_file_diff' && typeof args.diff === 'string') {
+    const m = args.diff.replace(/\r\n/g, '\n').match(/<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/);
+    if (m) {
+      // Lines shared at the start and end of both blocks are context, not changes.
+      const before: string[] = m[1].split('\n');
+      const after: string[] = m[2].split('\n');
+      let head = 0;
+      while (head < before.length && head < after.length && before[head] === after[head]) head++;
+      let tail = 0;
+      while (tail < before.length - head && tail < after.length - head && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+      const lines = [
+        ...before.slice(0, head).map(text => ({ cls: 'ctx', text: `  ${text}` })),
+        ...before.slice(head, before.length - tail).map(text => ({ cls: 'del', text: `- ${text}` })),
+        ...after.slice(head, after.length - tail).map(text => ({ cls: 'add', text: `+ ${text}` })),
+        ...before.slice(before.length - tail).map(text => ({ cls: 'ctx', text: `  ${text}` }))
+      ];
+      return (
+        <pre>
+          {lines.map((l, i) => (
+            <span key={i} className={l.cls}>{l.text}{i < lines.length - 1 ? '\n' : ''}</span>
+          ))}
+        </pre>
+      );
+    }
+  }
+  if (tool === 'write_file' && typeof args.content === 'string') return <pre>{args.content}</pre>;
+  if (tool === 'run_command' && typeof args.command === 'string') return <pre className="cmd">$ {args.command}</pre>;
+  return <pre>{JSON.stringify(args, null, 2)}</pre>;
 }
 
 const PLAN_MARK: Record<string, string> = { completed: '[x]', in_progress: '[~]', failed: '[!]', skipped: '[-]', pending: '[ ]' };
@@ -550,15 +582,27 @@ export const App: React.FC = () => {
       } else if (e.kind === 'tool') {
         if (e.tool === 'update_plan' && e.ok) return;
         const who = e.agent && e.agent !== shown.agent ? `${e.agent} ` : '';
+        const label =
+          e.tool === 'delegate_task' ? (
+            <><span className="info">{e.args?.agent ?? 'teammate'}</span> {e.ok ? 'finished' : 'did not finish'}</>
+          ) : e.tool ? describeTool(e.tool, e.args) : e.text;
         rows.push(
           <div key={i} className="msg tool">
             <span className={e.ok ? 'ok' : 'err'}>{e.ok ? '✓' : '✗'}</span>
-            <span className="what">{who && <span className="info">{who}</span>}{e.tool ? describeTool(e.tool, e.args) : e.text}</span>
+            <span className="what">{who && <span className="info">{who}</span>}{label}</span>
           </div>
         );
         if (!e.ok && e.error) {
           rows.push(<div key={`${i}e`} className="msg detail">{/rejected by user policy/.test(e.error) ? 'denied' : e.error}</div>);
         }
+      } else if (e.kind === 'delegate') {
+        const who = e.agent && e.agent !== shown.agent ? `${e.agent} ` : '';
+        rows.push(
+          <div key={i} className="msg tool">
+            <span className="info">→</span>
+            <span className="what">{who && <span className="info">{who}</span>}<span className="info">{e.args?.agent ?? 'teammate'}</span>: {e.args?.task ?? ''}</span>
+          </div>
+        );
       } else if (e.kind === 'approval') {
         // The tool line that follows already shows whether the call ran or was denied.
         return;
@@ -632,8 +676,12 @@ export const App: React.FC = () => {
                       {transcript()}
                       {shown.pendingApproval && (
                         <div className="permission" role="alertdialog" aria-label="permission required">
-                          <div><span className="warn">permission required</span> {describeTool(shown.pendingApproval.tool, shown.pendingApproval.args)}</div>
-                          <pre>{JSON.stringify(shown.pendingApproval.args, null, 2)}</pre>
+                          <div>
+                            <span className="warn">permission required</span>{' '}
+                            {shown.pendingApproval.agent && shown.pendingApproval.agent !== shown.agent && <span className="info">{shown.pendingApproval.agent} </span>}
+                            {describeTool(shown.pendingApproval.tool, shown.pendingApproval.args)}
+                          </div>
+                          {preview(shown.pendingApproval.tool, shown.pendingApproval.args)}
                           <div className="actions">
                             <button className="btn solid" onClick={() => decide(true)}><kbd>y</kbd>allow</button>
                             <button className="btn" onClick={() => decide(false)}><kbd>n</kbd>deny</button>
