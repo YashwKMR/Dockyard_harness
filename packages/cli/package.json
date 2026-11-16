@@ -8,9 +8,9 @@
   },
   "type": "module",
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js || true",
+    "build": "tsc -b",
     "start": "node dist/bin.js",
-    "test": "node --test dist/**/*.test.js"
+    "test": "node --test dist/bin.test.js"
   },
   "dependencies": {
     "@dockyard/core": "^1.0.0"
@@ -18,5 +18,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

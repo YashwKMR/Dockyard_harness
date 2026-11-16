@@ -12,6 +12,8 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, any>;
+  /** Vendor-specific fields that must be sent back unchanged with this call (e.g. Gemini thought signatures). */
+  providerData?: Record<string, any>;
 }
 
 export interface ToolResult {
@@ -28,6 +30,10 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   toolCallId?: string;
   name?: string;
+  /** Set on tool messages whose tool call failed. */
+  isError?: boolean;
+  /** Vendor-specific fields of an assistant turn that the vendor requires back (e.g. reasoning traces). */
+  providerData?: Record<string, any>;
 }
 
 export interface ModelCompletionOptions {
@@ -40,6 +46,7 @@ export interface ModelCompletionOptions {
 export interface ModelCompletionResponse {
   content: string;
   toolCalls?: ToolCall[];
+  providerData?: Record<string, any>;
   usage?: {
     promptTokens: number;
     completionTokens: number;

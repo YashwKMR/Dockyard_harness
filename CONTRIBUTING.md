@@ -15,7 +15,7 @@ The repository is managed as an npm monorepo under `packages/*`:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yashwant0906/Dockyard_harness.git
+   git clone https://github.com/YashwKMR/Dockyard_harness.git
    cd Dockyard_harness
    ```
 
@@ -43,4 +43,4 @@ The repository is managed as an npm monorepo under `packages/*`:
 - Branch naming convention: `feat/<feature-name>`, `fix/<bug-fix>`, or `docs/<topic>`.
 - Commit messages should follow Conventional Commits (e.g., `feat: ...`, `fix: ...`, `docs: ...`).
 - Ensure all tests pass across platforms (macOS, Linux, Windows).
-- If adding new features, include corresponding tests in `packages/core/src/index.test.ts` or `packages/cli/src/bin.test.ts`.
+- If adding new features, include corresponding tests under `packages/core/src/*.test.ts` or `packages/cli/src/bin.test.ts` (new test files must be added to the package's `test` script).

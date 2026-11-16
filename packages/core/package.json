@@ -6,12 +6,15 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "test": "node --test dist/**/*.test.js"
+    "build": "tsc -b",
+    "test": "node --test dist/index.test.js dist/providers.test.js dist/agents.test.js dist/server.test.js"
   },
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
